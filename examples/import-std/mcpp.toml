@@ -8,6 +8,14 @@ llvm.libcxx = { path = "../.." }
 [toolchain]
 default = "llvm@22.1.8"
 
+# The iOS deployment floor, stated as every iOS application states it. An
+# unversioned `arm64-apple-ios` triple is what clang gets without it under
+# mcpp 2026.9.13.2, and clang then refuses thread-local storage for that
+# target, which libc++abi's `cxa_thread_atexit.cpp` uses (measured on
+# macos-15). From mcpp 2026.9.14.1 an unset floor is the located SDK's version.
+[build]
+ios_deployment_target = "17.0"
+
 # The simulator row's runner and its compiler runtime, declared on the row that
 # needs them. The device row keeps no runner: an artefact cannot be run off an
 # iOS device without a signature the developer owns.
