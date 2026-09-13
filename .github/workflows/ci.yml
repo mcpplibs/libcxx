@@ -188,9 +188,15 @@ jobs:
           curl -L -fsS --retry 3 --retry-all-errors -o mcpp.zip \
             "https://github.com/mcpp-community/mcpp/releases/download/v${MCPP_VERSION}/mcpp-${MCPP_VERSION}-windows-x86_64.zip"
           unzip -q mcpp.zip
-          echo "MCPP=$PWD/mcpp-${MCPP_VERSION}-windows-x86_64/bin/mcpp.exe" >> "$GITHUB_ENV"
-          H="$HOME/.mcpp"; command -v cygpath >/dev/null && H=$(cygpath -m "$H")
-          echo "MCPP_HOME=$H" >> "$GITHUB_ENV"
+          # A released archive is self-contained: its home is the extracted
+          # directory and its xlings sits at registry/bin/xlings, which the
+          # engine finds only when told (the first probe stopped on `xlings
+          # binary not found`). Host spelling for both, as the plugins CI does.
+          D="$PWD/mcpp-${MCPP_VERSION}-windows-x86_64"; command -v cygpath >/dev/null && D=$(cygpath -m "$D")
+          echo "MCPP=$D/bin/mcpp.exe" >> "$GITHUB_ENV"
+          echo "MCPP_HOME=$D" >> "$GITHUB_ENV"
+          echo "MCPP_VENDORED_XLINGS=$D/registry/bin/xlings.exe" >> "$GITHUB_ENV"
+          ls "$D/registry/bin" | head
       - name: The program over this package, on the host's default toolchain
         continue-on-error: true
         run: |
