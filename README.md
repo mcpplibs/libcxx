@@ -6,11 +6,11 @@ that target.
 
 ```toml
 [target.'cfg(os = "ios")'.dependencies]
-llvm.libcxx               = "22.1.8.1"
+llvm.libcxx               = "22.1.8.2"
 llvm.compiler-rt-builtins = "22.1.8.5"
 ```
 
-mcpp reports `c++-abi libc++ (llvm.libcxx@22.1.8.1, graph)`, links the program
+mcpp reports `c++-abi libc++ (llvm.libcxx@22.1.8.2, graph)`, links the program
 with `-nostdlib++`, and the artefact carries no reference to the system's
 `libc++.1.dylib`. The version is upstream's: every file under `llvm/` is
 byte-identical to `llvmorg-22.1.8` (`llvm/UPSTREAM-REV`). The fourth segment is
@@ -66,9 +66,19 @@ carry none.
 
 `examples/import-std` is a program that imports `std` and exercises the two
 paths above (`std::unordered_map<std::string, int>` and
-`std::atomic<int>::notify_all`). The workflow builds it on Linux with
-`llvm@22.1.8` against glibc, which is the combination the engine change was
-first measured on (a prebuilt C library under a graph C++ runtime), and on a
-macOS runner for `aarch64-ios-sim`, where it runs under the simulator.
+`std::atomic<int>::notify_all`). The workflow builds it on every row the
+package claims, and runs it where the runner can:
+
+| row | runner | what is asserted |
+| --- | --- | --- |
+| `x86_64-linux-gnu` (glibc) | ubuntu-24.04 | the report names this package as the C++ layer, `ldd` lists no libc++, the program prints `1-2-3` |
+| `aarch64-macos` (native) | macos-15 | the same, with `otool -L` in place of `ldd` |
+| `aarch64-ios-sim` | macos-15 | the report, no libc++ in the load commands, and the program runs under the simulator through `simctl-run` |
+| `x86_64-ios-sim` | macos-15 | the report, `LC_BUILD_VERSION` names the simulator platform, no libc++ in the load commands (the host cannot run it) |
+| `aarch64-ios` | macos-15 | the report, `LC_BUILD_VERSION` names iOS, no libc++ in the load commands (a device build cannot be run without a signature) |
+
+Windows is not claimed (`[package] platforms`): libc++ over the MSVC runtime
+takes a configuration this package does not carry. A `workflow_dispatch` probe
+job measures that row on request and is not a gate.
 
 Design record: mcpp-community/mcpp, `.agents/docs/2026-09-13-630-*.md`, §5.

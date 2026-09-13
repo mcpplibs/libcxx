@@ -6,10 +6,12 @@ name: CI
 # that library's headers. The claim here is that a program above this package
 # imports `std`, reaches the two inline paths that failed at link on the iOS
 # rows under the payload's headers over the SDK's libc++, links with no
-# reference to another libc++, and runs. It is measured twice: on Linux over
-# glibc, which is the combination the engine change was first measured on (a
-# prebuilt C library under a graph C++ runtime), and on a macOS runner for the
-# iOS simulator, which is the row the package exists for.
+# reference to another libc++, and runs where the runner can run it. Every row
+# `[package] platforms` claims is a gate: Linux over glibc (the combination the
+# engine change was first measured on, a prebuilt C library under a graph C++
+# runtime), macOS natively, and the three iOS rows. Windows is not claimed and
+# is measured by a probe job on request, so that a row this package does not
+# serve cannot read as green beside the gates.
 
 on:
   push:
@@ -65,7 +67,7 @@ jobs:
           set -euo pipefail
           cd examples/import-std
           mcpp build 2>&1 | tee build.log
-          grep -E 'c\+\+-abi +libc\+\+ \(llvm\.libcxx@22\.1\.8\.1, graph\)' build.log \
+          grep -E 'c\+\+-abi +libc\+\+ \(llvm\.libcxx@22\.1\.8\.2, graph\)' build.log \
             || { echo "::error::the report does not name llvm.libcxx as the C++ layer"; exit 1; }
           grep -E 'c-abi +glibc' build.log \
             || { echo "::error::the report does not name the payload's C library"; exit 1; }
@@ -83,10 +85,27 @@ jobs:
           echo "$out" | tail -3
           grep -qx '1-2-3' <<<"$out" || { echo "::error::expected the line 1-2-3"; exit 1; }
 
-  ios-sim:
-    name: a program imports std over this package (aarch64-ios-sim)
+  apple:
+    name: a program imports std over this package (${{ matrix.row }})
     runs-on: macos-15
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The native row: the payload has macOS archives of its own, and
+          # this package replaces them the same way it replaces the SDK's
+          # libc++ on iOS. `run` is the host's.
+          - { row: aarch64-macos,   platform: "",  runs: host }
+          # The simulator that runs on this runner's architecture, through
+          # `simctl-run` from `xim:apple-simulator-tools`.
+          - { row: aarch64-ios-sim, platform: "7", runs: simulator }
+          # The simulator for the other architecture: the artefact is the
+          # claim, since a simulator runs the host's architecture only.
+          - { row: x86_64-ios-sim,  platform: "7", runs: none }
+          # The device row: the artefact is the claim, since running it
+          # needs a signature the developer owns.
+          - { row: aarch64-ios,     platform: "2", runs: none }
     defaults:
       run:
         shell: bash
@@ -102,28 +121,71 @@ jobs:
       - name: Install mcpp
         run: bash tools/install-mcpp.sh
 
-      # The simulator row: the SDK is the machine's, the compiler is the
-      # payload's, the C++ runtime is this package, the compiler runtime is
-      # the builtins package, and the runner is `simctl-run`.
-      - name: The program builds for the simulator and its closure names no system libc++
+      - name: The program builds and both the report and the load commands name no other libc++
         run: |
           set -euo pipefail
           cd examples/import-std
-          mcpp build --target aarch64-ios-sim 2>&1 | tee build.log
-          grep -E 'c\+\+-abi +libc\+\+ \(llvm\.libcxx@22\.1\.8\.1, graph\)' build.log \
+          target='${{ matrix.row }}'
+          if [ "$target" = "aarch64-macos" ]; then
+            mcpp build 2>&1 | tee build.log
+          else
+            mcpp build --target "$target" 2>&1 | tee build.log
+          fi
+          grep -E 'c\+\+-abi +libc\+\+ \(llvm\.libcxx@22\.1\.8\.2, graph\)' build.log \
             || { echo "::error::the report does not name llvm.libcxx as the C++ layer"; exit 1; }
-          bin=$(ls -td target/aarch64-ios-sim/*/bin/libcxx-import-std | head -1)
+          bin=$(ls -td target/*/*/bin/libcxx-import-std | head -1)
           file "$bin"
           otool -L "$bin"
           if otool -L "$bin" | grep -q 'libc++'; then
-            echo "::error::the artefact links the system libc++"; exit 1
+            echo "::error::the artefact links a libc++ dylib"; exit 1
           fi
           echo "ok: no libc++ dylib in the load commands"
+          if [ -n '${{ matrix.platform }}' ]; then
+            # The platform in LC_BUILD_VERSION is what tells an iOS artefact
+            # from a macOS one; a build that succeeds cannot.
+            got=$(otool -l "$bin" | awk '/cmd LC_BUILD_VERSION/{f=1} f && $1=="platform"{print $2; exit}')
+            [ "$got" = '${{ matrix.platform }}' ] \
+              || { echo "::error::LC_BUILD_VERSION platform is '$got', expected ${{ matrix.platform }}"; exit 1; }
+            echo "ok: LC_BUILD_VERSION platform ${{ matrix.platform }}"
+          fi
 
-      - name: The program runs under the simulator
+      - name: The program runs and prints what the two paths compute
+        if: matrix.runs != 'none'
         run: |
           set -euo pipefail
           cd examples/import-std
-          out=$(mcpp run --target aarch64-ios-sim 2>&1) || { echo "$out"; exit 1; }
+          if [ '${{ matrix.runs }}' = host ]; then
+            out=$(mcpp run 2>&1) || { echo "$out"; exit 1; }
+          else
+            out=$(mcpp run --target '${{ matrix.row }}' 2>&1) || { echo "$out"; exit 1; }
+          fi
           echo "$out" | tail -3
           grep -qx '1-2-3' <<<"$out" || { echo "::error::expected the line 1-2-3"; exit 1; }
+
+  # THE ROW THIS PACKAGE DOES NOT CLAIM, MEASURED ON REQUEST. libc++ over the
+  # MSVC runtime takes a configuration this package does not carry; this job
+  # records what actually happens there, every step continuing on error, and
+  # it does not run on push so that it cannot read as a gate.
+  windows-probe:
+    name: probe: what happens on windows x86_64 (not a gate)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xlings and mcpp
+        continue-on-error: true
+        run: |
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
+            | bash -s "$XLINGS_VERSION"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          bash tools/install-mcpp.sh
+      - name: The program over this package, on the host's default toolchain
+        continue-on-error: true
+        run: |
+          cd examples/import-std
+          mcpp build 2>&1 | tail -40

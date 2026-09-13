@@ -32,11 +32,21 @@
 [package]
 namespace   = "llvm"
 name        = "libcxx"
-version     = "22.1.8.1"
+version     = "22.1.8.2"
 description = "libc++ and libc++abi as a source package: the C++ standard library compiled with the consuming program's own flags, for a hosted target whose toolchain payload cannot supply a static libc++ built for it"
 license     = "Apache-2.0 WITH LLVM-exception"
 authors     = ["LLVM contributors", "mcpplibs (packaging)"]
 repo        = "https://github.com/mcpplibs/libcxx"
+
+# The platforms this package is measured on, in mcpp's vocabulary. `linux` is
+# measured over glibc on x86_64, `macos` natively on Apple silicon, and `ios`
+# on the device row (build) and both simulator rows (build; a run on the
+# arm64 simulator). Windows is not claimed: libc++ over the MSVC runtime
+# takes a different configuration (`_LIBCPP_HAS_THREAD_API_WIN32`, the
+# `src/support/win32` units, `_LIBCPP_NO_VCRUNTIME`), which this package
+# does not carry, and a probe job measures that row on request rather than
+# asserting it.
+platforms   = ["linux", "macos", "ios"]
 
 # The C++ layer. The older spelling is kept beside the current one so that an
 # engine predating the layer vocabulary still recognises this package; both
