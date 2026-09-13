@@ -167,7 +167,7 @@ jobs:
   # records what actually happens there, every step continuing on error, and
   # it does not run on push so that it cannot read as a gate.
   windows-probe:
-    name: probe: what happens on windows x86_64 (not a gate)
+    name: "probe, not a gate: what happens on windows x86_64"
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
     timeout-minutes: 60
