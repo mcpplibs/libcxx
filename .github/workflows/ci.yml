@@ -176,16 +176,22 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - name: Install xlings and mcpp
+      # The released Windows archive, the way mcpp-plugins' own Windows job
+      # takes it: the quick installer is a POSIX script and the runner's bash
+      # cannot put its shim on PATH.
+      - name: Fetch the released mcpp
         continue-on-error: true
         run: |
-          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
-            https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
-            | bash -s "$XLINGS_VERSION"
-          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
-          bash tools/install-mcpp.sh
+          set -e
+          curl -L -fsS --retry 3 --retry-all-errors -o mcpp.zip \
+            "https://github.com/mcpp-community/mcpp/releases/download/v${MCPP_VERSION}/mcpp-${MCPP_VERSION}-windows-x86_64.zip"
+          unzip -q mcpp.zip
+          echo "MCPP=$PWD/mcpp-${MCPP_VERSION}-windows-x86_64/bin/mcpp.exe" >> "$GITHUB_ENV"
+          H="$HOME/.mcpp"; command -v cygpath >/dev/null && H=$(cygpath -m "$H")
+          echo "MCPP_HOME=$H" >> "$GITHUB_ENV"
       - name: The program over this package, on the host's default toolchain
         continue-on-error: true
         run: |
           cd examples/import-std
-          mcpp build 2>&1 | tail -40
+          "$MCPP" --version
+          "$MCPP" build 2>&1 | tail -40
