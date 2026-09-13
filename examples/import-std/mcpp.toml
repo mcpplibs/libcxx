@@ -1,0 +1,21 @@
+[package]
+name    = "libcxx-import-std"
+version = "0.1.0"
+
+[dependencies]
+llvm.libcxx = { path = "../.." }
+
+[toolchain]
+default = "llvm@22.1.8"
+
+# The simulator row's runner and its compiler runtime, declared on the row that
+# needs them. The device row keeps no runner: an artefact cannot be run off an
+# iOS device without a signature the developer owns.
+[target.'cfg(os = "ios")'.dependencies]
+llvm.compiler-rt-builtins = "22.1.8.3"
+
+[target.aarch64-ios-sim]
+runner = ["simctl-run"]
+
+[target.aarch64-ios-sim.xlings.workspace]
+"xim:apple-simulator-tools" = ""

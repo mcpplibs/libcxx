@@ -1,0 +1,129 @@
+name: CI
+
+# What this workflow asserts.
+#
+# A C++ standard library is configured for one C library and compiled against
+# that library's headers. The claim here is that a program above this package
+# imports `std`, reaches the two inline paths that failed at link on the iOS
+# rows under the payload's headers over the SDK's libc++, links with no
+# reference to another libc++, and runs. It is measured twice: on Linux over
+# glibc, which is the combination the engine change was first measured on (a
+# prebuilt C library under a graph C++ runtime), and on a macOS runner for the
+# iOS simulator, which is the row the package exists for.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      mcpp_ref:
+        description: "Branch of mcpp-community/mcpp to build and test against (empty = the released pin)"
+        required: false
+        default: ""
+
+env:
+  MCPP_SOURCE_REF: ${{ github.event.inputs.mcpp_ref || vars.MCPP_SOURCE_REF }}
+  MCPP_VERSION: 2026.9.14.1
+  XLINGS_VERSION: v2026.9.5.1
+  XLINGS_NON_INTERACTIVE: '1'
+
+jobs:
+  linux:
+    name: a program imports std over this package (linux, glibc, ${{ matrix.toolchain }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ['llvm@22.1.8']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings and mcpp
+        run: |
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
+            | bash -s "$XLINGS_VERSION"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+      - name: Install mcpp
+        run: bash tools/install-mcpp.sh
+
+      - name: Select the toolchain
+        run: |
+          spec='${{ matrix.toolchain }}'
+          mcpp toolchain install "${spec%@*}" "${spec#*@}"
+          mcpp toolchain default "$spec"
+
+      # The report names the C++ layer as this package's, and the C library
+      # as the payload's: the combination this package exists for.
+      - name: The program builds, the report names both layers, the link is self-contained
+        run: |
+          set -euo pipefail
+          cd examples/import-std
+          mcpp build 2>&1 | tee build.log
+          grep -E 'c\+\+-abi +libc\+\+ \(llvm\.libcxx@22\.1\.8\.1, graph\)' build.log \
+            || { echo "::error::the report does not name llvm.libcxx as the C++ layer"; exit 1; }
+          grep -E 'c-abi +glibc' build.log \
+            || { echo "::error::the report does not name the payload's C library"; exit 1; }
+          bin=$(ls -td target/*/*/bin/libcxx-import-std | head -1)
+          if ldd "$bin" | grep -q 'libc++'; then
+            echo "::error::the artefact still links a libc++ shared object"; ldd "$bin"; exit 1
+          fi
+          echo "ok: no libc++ shared object in the closure"
+
+      - name: The program runs and prints what the two paths compute
+        run: |
+          set -euo pipefail
+          cd examples/import-std
+          out=$(mcpp run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | tail -3
+          grep -qx '1-2-3' <<<"$out" || { echo "::error::expected the line 1-2-3"; exit 1; }
+
+  ios-sim:
+    name: a program imports std over this package (aarch64-ios-sim)
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings and mcpp
+        run: |
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
+            | bash -s "$XLINGS_VERSION"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+      - name: Install mcpp
+        run: bash tools/install-mcpp.sh
+
+      # The simulator row: the SDK is the machine's, the compiler is the
+      # payload's, the C++ runtime is this package, the compiler runtime is
+      # the builtins package, and the runner is `simctl-run`.
+      - name: The program builds for the simulator and its closure names no system libc++
+        run: |
+          set -euo pipefail
+          cd examples/import-std
+          mcpp build --target aarch64-ios-sim 2>&1 | tee build.log
+          grep -E 'c\+\+-abi +libc\+\+ \(llvm\.libcxx@22\.1\.8\.1, graph\)' build.log \
+            || { echo "::error::the report does not name llvm.libcxx as the C++ layer"; exit 1; }
+          bin=$(ls -td target/aarch64-ios-sim/*/bin/libcxx-import-std | head -1)
+          file "$bin"
+          otool -L "$bin"
+          if otool -L "$bin" | grep -q 'libc++'; then
+            echo "::error::the artefact links the system libc++"; exit 1
+          fi
+          echo "ok: no libc++ dylib in the load commands"
+
+      - name: The program runs under the simulator
+        run: |
+          set -euo pipefail
+          cd examples/import-std
+          out=$(mcpp run --target aarch64-ios-sim 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | tail -3
+          grep -qx '1-2-3' <<<"$out" || { echo "::error::expected the line 1-2-3"; exit 1; }

@@ -1,0 +1,125 @@
+# libc++ and libc++abi as a SOURCE package, for a hosted target whose toolchain
+# payload cannot supply a static libc++ built for that target.
+#
+# THE CASE THAT CREATED IT. mcpp's LLVM payload ships libc++ headers, a std
+# module source and static archives built for the machine the payload runs on.
+# On the iOS rows the archives are macOS objects and ld64 refuses them, so the
+# engine linked the SDK's libc++ under the payload's newer headers: an inline
+# function in libc++ 22's headers then referenced a symbol the SDK's libc++ 19
+# does not export, and a program using std::unordered_map<std::string, int>
+# or std::atomic<int>::notify_all failed at link. Measured on Xcode 16.4 with
+# llvm 22.1.8 (mcpp-community/mcpp#630).
+#
+# A standard library is configured for one C library and compiled against its
+# headers; a program that merely FINDS headers is not the same thing. This
+# package carries the whole library, so that the headers a translation unit is
+# compiled against, the module it imports and the objects it links are one
+# release by construction. The C library beneath stays the target's own: the
+# SDK's libSystem on Apple platforms, glibc or musl on Linux.
+#
+# THE MECHANISM IS THE ONE `mcpplibs/openkal-llvm-runtime` USES. `provides`
+# declares the C++ layer; the engine broadcasts this package's headers to every
+# translation unit, adopts its std module over the toolchain's, and resolves
+# the distribution contract to self-contained with `-nostdlib++`. Nothing here
+# is Apple-specific: libc++ recognises Darwin and glibc by itself, and one
+# configuration serves both.
+#
+# THE NAMESPACE AND THE VERSION ARE UPSTREAM'S, as `llvm.compiler-rt-builtins`
+# established: every file under llvm/ is byte-identical to `llvmorg-22.1.8`
+# (llvm/UPSTREAM-REV), and the fourth segment is the packaging revision. A
+# consumer writes the version out in full, because a bare requirement in mcpp
+# is an exact pin and not a caret.
+[package]
+namespace   = "llvm"
+name        = "libcxx"
+version     = "22.1.8.1"
+description = "libc++ and libc++abi as a source package: the C++ standard library compiled with the consuming program's own flags, for a hosted target whose toolchain payload cannot supply a static libc++ built for it"
+license     = "Apache-2.0 WITH LLVM-exception"
+authors     = ["LLVM contributors", "mcpplibs (packaging)"]
+repo        = "https://github.com/mcpplibs/libcxx"
+
+# The C++ layer. The older spelling is kept beside the current one so that an
+# engine predating the layer vocabulary still recognises this package; both
+# name the same layer.
+provides = ["hosted-standard-library", "mcpp:c++-abi=libc++"]
+
+# libc++'s sources, and its std module above all, are compiled by clang.
+requires = ["mcpp:compiler=llvm"]
+
+# Where this package's std module sources are. The engine otherwise asks the
+# compiler for its own, which is the right question when the standard library
+# is the compiler's and the wrong one here.
+std-module        = "generated/std.cppm"
+std-compat-module = "generated/std.compat.cppm"
+std-module-flags = [
+  # The payload's clang++.cfg names a host C library's headers and the
+  # payload's own libc++; the module must see neither.
+  "--no-default-config",
+  "-nostdinc++",
+  # The module source includes ninety-odd fragments by relative name; they are
+  # upstream's and unmodified, so the search path names their directory.
+  "-I", "llvm/libcxx/modules",
+]
+
+[build]
+cxx_standard = "c++23"
+
+# Order is load-bearing: the generated configuration first, because every
+# header of the library includes it; then libc++'s headers, which must precede
+# any C library's; then the source-tree headers the .cpp files reach by
+# relative name; then llvm-libc's shared floating-point utilities, which
+# libc++'s from_chars implementation includes as "shared/...".
+include_dirs = [
+  "generated",
+  "llvm/libcxx/include",
+  "llvm/libcxx/src",
+  "llvm/libcxxabi/include",
+  "llvm/libcxxabi/src",
+  "llvm/libc",
+]
+
+sources = [
+  # The Itanium C++ ABI: exception objects, the demangler, guard variables,
+  # dynamic casts, the terminate handler.
+  "llvm/libcxxabi/src/*.cpp",
+  "!llvm/libcxxabi/src/cxa_noexception.cpp",
+  # `libcxx/src/new.cpp` is the canonical copy of the same code; upstream builds
+  # the two into separate libraries and links one. One artefact takes one copy.
+  "!llvm/libcxxabi/src/stdlib_new_delete.cpp",
+
+  # The standard library.
+  "llvm/libcxx/src/*.cpp",
+  "llvm/libcxx/src/filesystem/*.cpp",
+  # `__muloti4` and its relatives are the compiler runtime's; the driver links
+  # them on every hosted target this package serves, and a second definition
+  # is a duplicate symbol.
+  "!llvm/libcxx/src/filesystem/int128_builtins.cpp",
+  "llvm/libcxx/src/ryu/*.cpp",
+]
+
+cxxflags = [
+  "-nostdinc++",
+  "-D_LIBCPP_BUILDING_LIBRARY",
+  "-D_LIBCXXABI_BUILDING_LIBRARY",
+  "-DLIBCXX_BUILDING_LIBCXXABI",
+  # Hidden visibility for the library's own objects. A second libc++ in one
+  # process (the system's, loaded by every framework on Apple platforms) is
+  # kept apart by visibility, not by name: with default visibility dyld unifies
+  # the two copies and objects freed across them abort in libmalloc.
+  "-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS",
+  "-D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS",
+  "-fvisibility=hidden",
+  "-fvisibility-inlines-hidden",
+  "-DNDEBUG",
+  "-fexceptions",
+  "-frtti",
+  "-funwind-tables",
+  "-w",
+  "-ffunction-sections",
+  "-fdata-sections",
+]
+
+# glibc declares the `*_l` locale functions and `vasprintf` under _GNU_SOURCE;
+# clang defines it for C++ on Linux already, and Apple's libSystem ignores it.
+[target.'cfg(os = "linux")'.build]
+cxxflags = ["-D_GNU_SOURCE"]
