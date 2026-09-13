@@ -79,6 +79,12 @@ package claims, and runs it where the runner can:
 
 Windows is not claimed (`[package] platforms`): libc++ over the MSVC runtime
 takes a configuration this package does not carry. A `workflow_dispatch` probe
-job measures that row on request and is not a gate.
+job measures that row on request and is not a gate. Its reading under mcpp
+2026.9.14.1 on `x86_64-pc-windows-msvc`: the report names this package as the
+C++ layer, and the std module precompile stops at
+`invalid exception model 'dwarf' for target 'x86_64-pc-windows-msvc'`, because
+the engine's graph-runtime flags select DWARF exceptions on PE, which the MSVC
+target refuses. Claiming Windows would therefore need an engine change as well
+as the package's own Windows configuration.
 
 Design record: mcpp-community/mcpp, `.agents/docs/2026-09-13-630-*.md`, §5.
