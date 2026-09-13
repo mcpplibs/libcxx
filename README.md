@@ -7,7 +7,7 @@ that target.
 ```toml
 [target.'cfg(os = "ios")'.dependencies]
 llvm.libcxx               = "22.1.8.1"
-llvm.compiler-rt-builtins = "22.1.8.3"
+llvm.compiler-rt-builtins = "22.1.8.4"
 ```
 
 mcpp reports `c++-abi libc++ (llvm.libcxx@22.1.8.1, graph)`, links the program

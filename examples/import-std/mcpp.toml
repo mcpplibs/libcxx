@@ -12,7 +12,7 @@ default = "llvm@22.1.8"
 # needs them. The device row keeps no runner: an artefact cannot be run off an
 # iOS device without a signature the developer owns.
 [target.'cfg(os = "ios")'.dependencies]
-llvm.compiler-rt-builtins = "22.1.8.3"
+llvm.compiler-rt-builtins = "22.1.8.4"
 
 [target.aarch64-ios-sim]
 runner = ["simctl-run"]
