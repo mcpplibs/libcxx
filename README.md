@@ -87,7 +87,11 @@ cxx_runtime = { shared = "self-contained" }
 Each shared library then links this package's objects itself. Each image holds
 its own type information for libc++'s classes, so an exception of a standard
 library class thrown in the shared library is not caught by that class in the
-program; a class the shared library defines is.
+program; a class the shared library defines is. On Apple platforms every unit of
+such a graph is compiled with hidden visibility, so that the runtime's
+instantiations are never coalesced with the system's libc++; a shared library
+there exports the declarations it marks `[[gnu::visibility("default")]]` and
+nothing else (`examples/shared-dependency/greeter`).
 
 ## Where it is measured
 
