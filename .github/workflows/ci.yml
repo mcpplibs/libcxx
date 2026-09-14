@@ -12,6 +12,13 @@ name: CI
 # runtime), macOS natively, and the three iOS rows. Windows is not claimed and
 # is measured by a probe job on request, so that a row this package does not
 # serve cannot read as green beside the gates.
+#
+# Two further claims hold from mcpp 2026.9.15.2: the same program at c++20
+# builds and runs, because the package's own sources compile at the level it
+# states while the std module takes the program's; and a program over a C++
+# shared library dependency builds and runs when it states a private copy of
+# the runtime for shared libraries, with the shared library carrying no
+# reference to another libc++.
 
 on:
   push:
@@ -26,7 +33,7 @@ on:
 
 env:
   MCPP_SOURCE_REF: ${{ github.event.inputs.mcpp_ref || vars.MCPP_SOURCE_REF }}
-  MCPP_VERSION: 2026.9.14.1
+  MCPP_VERSION: 2026.9.15.2
   XLINGS_VERSION: v2026.9.5.1
   XLINGS_NON_INTERACTIVE: '1'
 
@@ -67,7 +74,7 @@ jobs:
           set -euo pipefail
           cd examples/import-std
           mcpp build 2>&1 | tee build.log
-          grep -E 'c\+\+-abi +libc\+\+ +\(libcxx@22\.1\.8\.2, graph\)' build.log \
+          grep -E 'c\+\+-abi +libc\+\+ +\(libcxx@22\.1\.8\.3, graph\)' build.log \
             || { echo "::error::the report does not name llvm.libcxx as the C++ layer"; exit 1; }
           # The report prints a layer only when a package answers for it; the
           # C library is the payload's here and is read from the target line.
@@ -86,6 +93,35 @@ jobs:
           out=$(mcpp run 2>&1) || { echo "$out"; exit 1; }
           echo "$out" | tail -3
           grep -qx '1-2-3' <<<"$out" || { echo "::error::expected the line 1-2-3"; exit 1; }
+
+      - name: The program at c++20 builds and runs
+        run: |
+          set -euo pipefail
+          cd examples/import-std-cxx20
+          mcpp build 2>&1 | tee build.log
+          out=$(mcpp run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | tail -3
+          grep -qx '1-2-3' <<<"$out" || { echo "::error::expected the line 1-2-3 at c++20"; exit 1; }
+
+      - name: A shared library dependency with a stated private copy builds and runs
+        run: |
+          set -euo pipefail
+          cd examples/shared-dependency
+          mcpp build 2>&1 | tee build.log
+          so=$(find target -name 'libgreeter.so' -type f | head -1)
+          [ -n "$so" ] || { echo "::error::no libgreeter.so was built"; exit 1; }
+          needed=$(readelf -d "$so" | grep NEEDED || true)
+          echo "$needed"
+          if grep -q 'libc++' <<<"$needed"; then
+            echo "::error::the shared library needs a libc++ shared object"; exit 1
+          fi
+          symbols=$(nm -D --undefined-only "$so")
+          n=$(grep -c '__1' <<<"$symbols" || true)
+          [ "$n" -eq 0 ] || { echo "::error::the shared library has $n undefined libc++ references"; exit 1; }
+          out=$(mcpp run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | tail -3
+          grep -qx 'greeter-3' <<<"$out" || { echo "::error::expected the line greeter-3"; exit 1; }
+          echo "reading: $(grep runtime_error <<<"$out")"
 
   apple:
     name: a program imports std over this package (${{ matrix.row }})
@@ -133,7 +169,7 @@ jobs:
           else
             mcpp build --target "$target" 2>&1 | tee build.log
           fi
-          grep -E 'c\+\+-abi +libc\+\+ +\(libcxx@22\.1\.8\.2, graph\)' build.log \
+          grep -E 'c\+\+-abi +libc\+\+ +\(libcxx@22\.1\.8\.3, graph\)' build.log \
             || { echo "::error::the report does not name llvm.libcxx as the C++ layer"; exit 1; }
           bin=$(ls -td target/*/*/bin/libcxx-import-std | head -1)
           file "$bin"
@@ -163,6 +199,42 @@ jobs:
           fi
           echo "$out" | tail -3
           grep -qx '1-2-3' <<<"$out" || { echo "::error::expected the line 1-2-3"; exit 1; }
+
+      - name: The program at c++20 builds, and runs where the runner can
+        run: |
+          set -euo pipefail
+          cd examples/import-std-cxx20
+          target='${{ matrix.row }}'
+          if [ "$target" = "aarch64-macos" ]; then
+            mcpp build 2>&1 | tee build.log
+          else
+            mcpp build --target "$target" 2>&1 | tee build.log
+          fi
+          case '${{ matrix.runs }}' in
+            host)      out=$(mcpp run 2>&1) || { echo "$out"; exit 1; } ;;
+            simulator) out=$(mcpp run --target "$target" 2>&1) || { echo "$out"; exit 1; } ;;
+            *)         echo "ok: built at c++20; this row is not run here"; exit 0 ;;
+          esac
+          echo "$out" | tail -3
+          grep -qx '1-2-3' <<<"$out" || { echo "::error::expected the line 1-2-3 at c++20"; exit 1; }
+
+      - name: A shared library dependency with a stated private copy builds and runs
+        if: matrix.row == 'aarch64-macos'
+        run: |
+          set -euo pipefail
+          cd examples/shared-dependency
+          mcpp build 2>&1 | tee build.log
+          dylib=$(find target -name 'libgreeter.dylib' -type f | head -1)
+          [ -n "$dylib" ] || { echo "::error::no libgreeter.dylib was built"; exit 1; }
+          loads=$(otool -L "$dylib")
+          echo "$loads"
+          if grep -q 'libc++' <<<"$loads"; then
+            echo "::error::the shared library links a libc++ dylib"; exit 1
+          fi
+          out=$(mcpp run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | tail -3
+          grep -qx 'greeter-3' <<<"$out" || { echo "::error::expected the line greeter-3"; exit 1; }
+          echo "reading: $(grep runtime_error <<<"$out")"
 
   # THE ROW THIS PACKAGE DOES NOT CLAIM, MEASURED ON REQUEST. libc++ over the
   # MSVC runtime takes a configuration this package does not carry; this job
