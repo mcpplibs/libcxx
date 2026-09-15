@@ -1,0 +1,18 @@
+# A program over a C++ shared library dependency, in a graph whose C++ runtime
+# is this package. Each shared library links a private copy of the runtime,
+# which the program states for shared libraries; without the statement mcpp
+# 2026.9.15.2 refuses the build before compiling, because the shared library
+# would have no C++ runtime.
+[package]
+name    = "libcxx-shared-dependency"
+version = "0.1.0"
+
+[dependencies]
+llvm.libcxx = { path = "../.." }
+greeter     = { path = "greeter" }
+
+[toolchain]
+default = "llvm@22.1.8"
+
+[build]
+cxx_runtime = { shared = "self-contained" }

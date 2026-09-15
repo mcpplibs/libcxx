@@ -32,7 +32,7 @@
 [package]
 namespace   = "llvm"
 name        = "libcxx"
-version     = "22.1.8.2"
+version     = "22.1.8.3"
 description = "libc++ and libc++abi as a source package: the C++ standard library compiled with the consuming program's own flags, for a hosted target whose toolchain payload cannot supply a static libc++ built for it"
 license     = "Apache-2.0 WITH LLVM-exception"
 authors     = ["LLVM contributors", "mcpplibs (packaging)"]
@@ -47,6 +47,16 @@ repo        = "https://github.com/mcpplibs/libcxx"
 # does not carry, and a probe job measures that row on request rather than
 # asserting it.
 platforms   = ["linux", "macos", "ios"]
+
+# The language level of this package's own sources. libc++ 22 is written for
+# C++23 (`std::string::resize_and_overwrite` in the filesystem sources,
+# `std::bad_expected_access` in expected.cpp) and upstream compiles it at that
+# level, while its consumers may be at any level. From mcpp 2026.9.15.2 a
+# package that provides the C++ layer compiles its implementation units at the
+# level it states here, and its std module at the consuming graph's level, so a
+# program at c++20 can use this package. An older engine compiles every unit at
+# the graph's level, which is c++23 unless the program states otherwise.
+standard    = "c++23"
 
 # The C++ layer. The older spelling is kept beside the current one so that an
 # engine predating the layer vocabulary still recognises this package; both
@@ -72,7 +82,6 @@ std-module-flags = [
 ]
 
 [build]
-cxx_standard = "c++23"
 
 # Order is load-bearing: the generated configuration first, because every
 # header of the library includes it; then libc++'s headers, which must precede
